@@ -71,11 +71,16 @@ class GtkUI(object):
         window.connect('configure-event', self._on_gtk_configure)
         window.connect('delete-event', self._on_gtk_quit)
         window.connect('key-press-event', self._on_gtk_key)
+        window.connect('key-release-event', self._on_gtk_key_release)
         window.connect('button-press-event', self._on_gtk_button_press)
         window.connect('button-release-event', self._on_gtk_button_release)
         window.connect('motion-notify-event', self._on_gtk_motion_notify)
+        window.connect('focus-in-event', self._on_focus_in)
+        window.connect('focus-out-event', self._on_focus_out)
         window.show_all()
-        im_context = Gtk.IMContextSimple()
+        im_context = Gtk.IMMulticontext()
+        im_context.set_client_window(drawing_area.get_window())
+        im_context.set_use_preedit(False) #FIXME: preedit at cursor position
         im_context.connect('commit', self._on_gtk_input)
         self._pango_context = drawing_area.create_pango_context()
         self._drawing_area = drawing_area
@@ -304,6 +309,9 @@ class GtkUI(object):
         input_str = _stringify_key(KEY_TABLE.get(key_name, key_name), state)
         self._bridge.send_input(input_str)
 
+    def _on_gtk_key_release(self, widget, event, *args):
+        self._im_context.filter_keypress(event)
+
     def _on_gtk_button_press(self, widget, event, *args):
         if event.type != Gdk.EventType.BUTTON_PRESS:
             return
@@ -330,6 +338,12 @@ class GtkUI(object):
         input_str = _stringify_key(self._pressed + 'Drag', event.state)
         input_str += '<{0},{1}>'.format(col, row)
         self._bridge.send_input(input_str)
+
+    def _on_focus_in(self, *a):
+        self._im_context.focus_in()
+
+    def _on_focus_out(self, *a):
+        self._im_context.focus_out()
 
     def _on_gtk_input(self, widget, input_str, *args):
         self._bridge.send_input(input_str)
