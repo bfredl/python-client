@@ -4,11 +4,13 @@ import io
 import logging
 import os
 import sys
+from itertools import count
 
 from .decorators import plugin, rpc_export
 from ..api import Nvim, walk
 from ..msgpack_rpc import ErrorResponse
 from ..util import format_exc_skip
+import rlcompleter
 
 __all__ = ('ScriptHost',)
 
@@ -40,6 +42,7 @@ class ScriptHost(object):
         exec('import sys', self.module.__dict__)
         self.legacy_vim = LegacyVim.from_nvim(nvim)
         sys.modules['vim'] = self.legacy_vim
+        self.completer = rlcompleter.Completer(self.module.__dict__)
 
     def setup(self, nvim):
         """Setup import hooks and global streams.
@@ -152,6 +155,18 @@ class ScriptHost(object):
     def python_eval(self, expr):
         """Handle the `pyeval` vim function."""
         return eval(expr, self.module.__dict__)
+
+    @rpc_export('python_get_completions', sync=True)
+    def python_complete(self, code, curpos):
+        """Completions for the `python` ex command."""
+        text = code[:curpos]
+        completions = []
+        for i in count():
+            c = self.completer.complete(text,i)
+            if c is None:
+                break
+            completions.append(c)
+        return completions
 
     def _set_current_range(self, start, stop):
         current = self.legacy_vim.current
