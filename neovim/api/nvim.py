@@ -1,5 +1,5 @@
 """Main Nvim interface."""
-import functools
+from functools import partial
 import os
 import sys
 
@@ -165,6 +165,9 @@ class Nvim(object):
             return walk(self._to_nvim, result)
 
         def filter_notification_cb(name, args):
+            if name == b"nvim_status":
+                self._update_status(*args)
+                return
             name = self._from_nvim(name)
             args = walk(self._from_nvim, args)
             try:
@@ -175,7 +178,20 @@ class Nvim(object):
                 self._err_cb(msg)
                 raise
 
+        self._session.__dict__.setdefault("_status",{})
+        self.request("nvim_status_subscribe", True, async=True)
         self._session.run(filter_request_cb, filter_notification_cb, setup_cb)
+
+    def _update_status(self, props):
+        status = self._session._status
+        status.update(walk(partial(self._from_nvim,decode=False),props))
+
+    @property
+    def _status(self):
+        try:
+            return self._session._status
+        except AttributeError:
+            return {}
 
     def stop_loop(self):
         """Stop the event loop being started with `run_loop`."""
@@ -409,7 +425,10 @@ class Current(object):
 
     @property
     def buffer(self):
-        return self._session.request('nvim_get_current_buf')
+        try:
+            return self._session._status[b'curbuf']
+        except KeyError:
+            return self._session.request('nvim_get_current_buf')
 
     @buffer.setter
     def buffer(self, buffer):
@@ -440,7 +459,7 @@ class Funcs(object):
         self._nvim = nvim
 
     def __getattr__(self, name):
-        return functools.partial(self._nvim.call, name)
+        return partial(self._nvim.call, name)
 
 
 class NvimError(Exception):
