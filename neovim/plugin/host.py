@@ -1,5 +1,5 @@
 """Implements a Nvim host for python plugins."""
-import functools
+from functools import partial
 import imp
 import inspect
 import logging
@@ -14,6 +14,7 @@ from ..api import decode_if_bytes, walk
 from ..compat import IS_PYTHON3, find_module
 from ..msgpack_rpc import ErrorResponse
 from ..util import format_exc_skip
+from ..version import VERSION
 
 __all__ = ('Host')
 
@@ -40,7 +41,8 @@ class Host(object):
         self._request_handlers = {
             'poll': lambda: 'ok',
             'specs': self._on_specs_request,
-            'shutdown': self.shutdown
+            'shutdown': self.shutdown,
+            'register_host': self._register_host,
         }
 
         # Decode per default for Python3
@@ -53,8 +55,17 @@ class Host(object):
         """Start listening for msgpack-rpc requests and notifications."""
         self.nvim.run_loop(self._on_request,
                            self._on_notification,
-                           lambda: self._load(plugins),
+                           partial(self._on_setup, plugins),
                            err_cb=self._on_async_err)
+
+    def _on_setup(self, plugins):
+        self._load(plugins)
+        for f in self.nvim.metadata['functions']:
+            if f['name'] == "nvim_set_channel_info":
+                name = "python3-host" if IS_PYTHON3 else "python-host"
+                meths = {name:{} for name in self._request_handlers.keys()}
+                self.nvim.api.set_channel_info(name, VERSION, "host", meths, {})
+
 
     def shutdown(self):
         """Shutdown the host."""
@@ -181,8 +192,8 @@ class Host(object):
             if fn._nvim_prefix_plugin_path:
                 method = '{}:{}'.format(plugin_path, method)
 
-            fn_wrapped = functools.partial(self._wrap_function, fn,
-                                           sync, decode, nvim_bind, method)
+            fn_wrapped = partial(self._wrap_function, fn,
+                                 sync, decode, nvim_bind, method)
             self._copy_attributes(fn, fn_wrapped)
             # register in the rpc handler dict
             if sync:
@@ -213,6 +224,12 @@ class Host(object):
         if path in self._load_errors:
             self.nvim.out_write(self._load_errors[path] + '\n')
         return self._specs.get(path, 0)
+
+    def _register_host(self, name):
+        for path, err in self._load_errors.items():
+            self.nvim.out_write(err + '\n')
+        self.nvim.call('remote#host#HostUpdateSpecs', name, self._specs, True)
+
 
     def _configure_nvim_for(self, obj):
         # Configure a nvim instance for obj (checks encoding configuration)

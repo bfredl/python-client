@@ -104,6 +104,8 @@ class Nvim(object):
     def _to_nvim(self, obj):
         if isinstance(obj, Remote):
             return ExtType(*obj.code_data)
+        elif isinstance(obj, Version):
+            return obj.__dict__
         return obj
 
     def request(self, name, *args, **kwargs):
