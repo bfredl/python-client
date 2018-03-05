@@ -28,8 +28,31 @@ loop_cls = asyncio.SelectorEventLoop
 if os.name == 'nt':
     # On windows use ProactorEventLoop which support pipes and is backed by the
     # more powerful IOCP facility
+    # NOTE: we override in the stdio case, because it doesn't work.
     loop_cls = asyncio.ProactorEventLoop
 
+    import msvcrt
+    from ctypes import windll, byref, wintypes, GetLastError, WinError
+    from ctypes.wintypes import HANDLE, DWORD, POINTER, BOOL
+
+    LPDWORD = POINTER(DWORD)
+
+    PIPE_NOWAIT = wintypes.DWORD(0x00000001)
+
+    ERROR_NO_DATA = 232
+
+    def pipe_no_wait(pipefd):
+        SetNamedPipeHandleState = windll.kernel32.SetNamedPipeHandleState
+        SetNamedPipeHandleState.argtypes = [HANDLE, LPDWORD, LPDWORD, LPDWORD]
+        SetNamedPipeHandleState.restype = BOOL
+
+        h = msvcrt.get_osfhandle(pipefd)
+
+        res = windll.kernel32.SetNamedPipeHandleState(h, byref(PIPE_NOWAIT), None, None)
+        if res == 0:
+            print(WinError())
+            return False
+        return True
 
 class AsyncioEventLoop(BaseEventLoop, asyncio.Protocol,
                        asyncio.SubprocessProtocol):
@@ -72,29 +95,49 @@ class AsyncioEventLoop(BaseEventLoop, asyncio.Protocol,
         self._on_error('EOF')
 
     def _init(self):
-        self._loop = loop_cls()
         self._queued_data = deque()
         self._fact = lambda: self
         self._raw_transport = None
+        self._raw_stdio = False
 
     def _connect_tcp(self, address, port):
+        self._loop = loop_cls()
         coroutine = self._loop.create_connection(self._fact, address, port)
         self._loop.run_until_complete(coroutine)
 
     def _connect_socket(self, path):
+        self._loop = loop_cls()
         if os.name == 'nt':
             coroutine = self._loop.create_pipe_connection(self._fact, path)
         else:
             coroutine = self._loop.create_unix_connection(self._fact, path)
         self._loop.run_until_complete(coroutine)
 
+    def _on_stdin(self):
+        data = sys.stdin.buffer.read(1)
+        self.data_received(data)
+
     def _connect_stdio(self):
-        coroutine = self._loop.connect_read_pipe(self._fact, sys.stdin)
-        self._loop.run_until_complete(coroutine)
-        coroutine = self._loop.connect_write_pipe(self._fact, sys.stdout)
-        self._loop.run_until_complete(coroutine)
+        if True or os.name == "nt":
+            # work around broken windows implementation
+            self._loop = asyncio.SelectorEventLoop()
+            self._raw_stdio = True
+            self._loop.add_reader(sys.stdin.fileno(), self._on_stdin)
+            if os.name == "nt":
+                pipe_no_wait(sys.stdin.fileno())
+            else:
+                import fcntl
+                orig_fl = fcntl.fcntl(sys.stdin.fileno(), fcntl.F_GETFL)
+                fcntl.fcntl(sys.stdin.fileno(), fcntl.F_SETFL, orig_fl | os.O_NONBLOCK)
+        else:
+            self._loop = loop_cls()
+            coroutine = self._loop.connect_read_pipe(self._fact, sys.stdin)
+            self._loop.run_until_complete(coroutine)
+            coroutine = self._loop.connect_write_pipe(self._fact, sys.stdout)
+            self._loop.run_until_complete(coroutine)
 
     def _connect_child(self, argv):
+        self._loop = loop_cls()
         self._child_watcher = asyncio.get_child_watcher()
         self._child_watcher.attach_loop(self._loop)
         coroutine = self._loop.subprocess_exec(self._fact, *argv)
@@ -104,7 +147,10 @@ class AsyncioEventLoop(BaseEventLoop, asyncio.Protocol,
         pass
 
     def _send(self, data):
-        self._transport.write(data)
+        if self._raw_stdio:
+            sys.stdout.buffer.write(data)
+        else:
+            self._transport.write(data)
 
     def _run(self):
         while self._queued_data:
