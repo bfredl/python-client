@@ -114,8 +114,11 @@ class AsyncioEventLoop(BaseEventLoop, asyncio.Protocol,
         self._loop.run_until_complete(coroutine)
 
     def _on_stdin(self):
-        data = sys.stdin.buffer.read(1)
-        self.data_received(data)
+        while True:
+            data = sys.stdin.buffer.read(1)
+            if len(data) == 0:
+                break
+            self.data_received(data)
 
     def _connect_stdio(self):
         if True or os.name == "nt":
