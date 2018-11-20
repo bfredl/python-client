@@ -17,6 +17,7 @@ class UvEventLoop(BaseEventLoop):
         self._connection_error = None
         self._error_stream = None
         self._callbacks = deque()
+        self.is_child = False
 
     def _on_connect(self, stream, error):
         self.stop()
@@ -32,9 +33,23 @@ class UvEventLoop(BaseEventLoop):
             msg = pyuv.errno.strerror(error) if error else 'EOF'
             self._on_error(msg)
             return
-        if handle == self._error_stream:
-            return
+        #if self.is_child:
+            sys.stderr.write(repr(data))
+        #    sys.stderr.flush()
+        #except e:
+        #    self._on_error(repr(e))
         self._on_data(data)
+
+    def _on_stderr(self, handle, data, error):
+        if error or not data:
+            msg = pyuv.errno.strerror(error) if error else 'EOF'
+            self._on_error(msg)
+            return
+        try:
+            sys.stderr.write(data.decode("utf-8", errors="surrogateescape"))
+            sys.stderr.flush()
+        except e:
+            self._on_error(repr(e))
 
     def _on_write(self, handle, error):
         if error:
@@ -64,6 +79,7 @@ class UvEventLoop(BaseEventLoop):
         self._write_stream.open(sys.stdout.fileno())
 
     def _connect_child(self, argv):
+        self.is_child = True
         self._write_stream = pyuv.Pipe(self._loop)
         self._read_stream = pyuv.Pipe(self._loop)
         self._error_stream = pyuv.Pipe(self._loop)
@@ -78,7 +94,7 @@ class UvEventLoop(BaseEventLoop):
                            exit_callback=self._on_exit,
                            flags=pyuv.UV_PROCESS_WINDOWS_HIDE,
                            stdio=(stdin, stdout, stderr,))
-        self._error_stream.start_read(self._on_read)
+        self._error_stream.start_read(self._on_stderr)
 
     def _start_reading(self):
         if self._transport_type in ['tcp', 'socket']:
