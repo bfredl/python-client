@@ -46,6 +46,8 @@ but it can make asynchronous requests, i.e. passing ``async_=True``.
 
 .. note::
 
+    TODO: bring me up to date!
+
     Plugins must not invoke API methods in ``__init__`` or global module scope
     (or really do anything with non-trivial side-effects). A well-behaved rplugin
     will not start executing until its functionality is requested by the user.
