@@ -21,7 +21,7 @@ class MsgpackStream(object):
         """Wrap `event_loop` on a msgpack-aware interface."""
         self.loop = event_loop
         self._packer = Packer(unicode_errors=unicode_errors_default)
-        self._unpacker = Unpacker()
+        self._unpacker = Unpacker(max_buffer_size=20*1024*1024)
         self._message_cb = None
 
     def threadsafe_call(self, fn):
